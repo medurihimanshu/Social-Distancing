@@ -1,32 +1,8 @@
-#!/usr/bin/env python
-
-'''
-Calculates Region of Interest(ROI) by receiving points from mouse event and transform prespective so that
-we can have top view of scene or ROI. This top view or bird eye view has the property that points are
-distributed uniformally horizontally and vertically(scale for horizontal and vertical direction will be
- different). So for bird eye view points are equally distributed, which was not case for normal view.
-
-YOLO V3 is used to detect humans in frame and by calculating bottom center point of bounding boxe around humans, 
-we transform those points to bird eye view. And then calculates risk factor by calculating distance between
-points and then drawing birds eye view and drawing bounding boxes and distance lines between boxes on frame.
-'''
-
-__title__           = "main.py"
-__Version__         = "1.0"
-__copyright__       = "Copyright 2020 , Social Distancing AI"
-__license__         = "MIT"
-__author__          = "Deepak Birla"
-__email__           = "birla.deepak26@gmail.com"
-__date__            = "2020/05/29"
-__python_version__  = "3.5.2"
-
-# imports
 import cv2
 import numpy as np
 import time
 import argparse
 
-# own modules
 import utills, plot
 
 confid = 0.5
@@ -36,7 +12,7 @@ mouse_pts = []
 
 # Function to get points for Region of Interest(ROI) and distance scale. It will take 8 points on first frame using mouse click    
 # event.First four points will define ROI where we want to moniter social distancing. Also these points should form parallel  
-# lines in real world if seen from above(birds eye view). Next 3 points will define 6 feet(unit length) distance in     
+# lines in real world if seen from above(birds eye view). Next 3 points will define 180 cm distance in     
 # horizontal and vertical direction and those should form parallel lines with ROI. Unit length we can take based on choice.
 # Points should pe in pre-defined order - bottom-left, bottom-right, top-right, top-left, point 5 and 6 should form     
 # horizontal line and point 5 and 7 should form verticle line. Horizontal and vertical scale will be different. 
@@ -47,11 +23,13 @@ def get_mouse_points(event, x, y, flags, param):
 
     global mouse_pts
     if event == cv2.EVENT_LBUTTONDOWN:
+        # Ensuring First 4 points will be used for ROI
         if len(mouse_pts) < 4:
             cv2.circle(image, (x, y), 5, (0, 0, 0), 10)
         else:
             cv2.circle(image, (x, y), 5, (255, 255, 255), 10)
-            
+
+        # Visibility of ROI    
         if len(mouse_pts) >= 1 and len(mouse_pts) <= 3:
             cv2.line(image, (x, y), (mouse_pts[len(mouse_pts)-1][0], mouse_pts[len(mouse_pts)-1][1]), (70, 70, 70), 2)
             if len(mouse_pts) == 3:
@@ -79,9 +57,10 @@ def calculate_social_distancing(vid_path, net, output_dir, output_vid, ln1):
     # Bird's eye view will only show ROI
     scale_w, scale_h = utills.get_scale(width, height)
 
+    # Video Writer
     fourcc = cv2.VideoWriter_fourcc(*"XVID")
-    output_movie = cv2.VideoWriter("./output_vid/distancing.avi", fourcc, fps, (width, height+140))
-    bird_movie = cv2.VideoWriter("./output_vid/bird_eye_view.avi", fourcc, fps, (int(width * scale_w), int(height * scale_h)))
+    output_writer = cv2.VideoWriter("./output_vid/distancing.avi", fourcc, fps, (width, height+140))
+    bird_vid_writer = cv2.VideoWriter("./output_vid/bird_eye_view.avi", fourcc, fps, (int(width * scale_w), int(height * scale_h)))
         
     points = []
     global image
@@ -119,20 +98,20 @@ def calculate_social_distancing(vid_path, net, output_dir, output_vid, ln1):
 
         # using next 3 points for horizontal and vertical unit length(in this case 180 cm)
         pts = np.float32(np.array([points[4:7]]))
-        warped_pt = cv2.perspectiveTransform(pts, prespective_transform)[0]
+        trans_pts = cv2.perspectiveTransform(pts, prespective_transform)[0]
         
         # since bird eye view has property that all points are equidistant in horizontal and vertical direction.
         # distance_w and distance_h will give us 180 cm distance in both horizontal and vertical directions
         # (how many pixels will be there in 180cm length in horizontal and vertical direction of birds eye view),
         # which we can use to calculate distance between two humans in transformed view or bird eye view
-        distance_w = np.sqrt((warped_pt[0][0] - warped_pt[1][0]) ** 2 + (warped_pt[0][1] - warped_pt[1][1]) ** 2)
-        distance_h = np.sqrt((warped_pt[0][0] - warped_pt[2][0]) ** 2 + (warped_pt[0][1] - warped_pt[2][1]) ** 2)
+        distance_w = np.sqrt((trans_pts[0][0] - trans_pts[1][0]) ** 2 + (trans_pts[0][1] - trans_pts[1][1]) ** 2)
+        distance_h = np.sqrt((trans_pts[0][0] - trans_pts[2][0]) ** 2 + (trans_pts[0][1] - trans_pts[2][1]) ** 2)
         pnts = np.array(points[:4], np.int32)
         cv2.polylines(frame, [pnts], True, (70, 70, 70), thickness=2)
     
-    ####################################################################################
+
     
-        # YOLO v3
+        # YOLO v3 - Model
         blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
         net.setInput(blob)
         start = time.time()
@@ -147,7 +126,7 @@ def calculate_social_distancing(vid_path, net, output_dir, output_vid, ln1):
                 scores = detection[5:]
                 classID = np.argmax(scores)
                 confidence = scores[classID]
-                # detecting humans in frame
+                # detecting humans in frame - ClassID will be 0 for Person
                 if classID == 0:
 
                     if confidence > confid:
@@ -190,8 +169,8 @@ def calculate_social_distancing(vid_path, net, output_dir, output_vid, ln1):
         
         # Show/write image and videos
         if count != 0:
-            output_movie.write(img)
-            bird_movie.write(bird_image)
+            output_writer.write(img)
+            bird_vid_writer.write(bird_image)
     
             cv2.imshow('Bird Eye View', bird_image)
             cv2.imshow('Normal Output view', img)
@@ -208,7 +187,6 @@ def calculate_social_distancing(vid_path, net, output_dir, output_vid, ln1):
 
 if __name__== "__main__":
 
-    # Receives arguements specified by user
     parser = argparse.ArgumentParser()
     
     parser.add_argument('-v', '--video_path', action='store', dest='video_path', default='./data/test.mp4' ,
@@ -241,7 +219,7 @@ if __name__== "__main__":
         output_vid = output_vid + '/'
 
 
-    # load Yolov3 weights
+    # load respective weights
     
     weightsPath = model_path + "yolov3.weights"
     configPath = model_path + "yolov3.cfg"
